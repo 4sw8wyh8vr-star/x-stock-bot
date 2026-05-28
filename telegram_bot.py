@@ -88,16 +88,30 @@ def build_message(tweet, analysis, snapshots: dict) -> str:
         for ticker, snap in snapshots.items():
             direction = "▲" if snap.change_pct >= 0 else "▼"
             change_str = f"{direction}{abs(snap.change_pct):.2f}%"
-            lines.append(f"<b>${_e(ticker)}</b> — ${snap.price:.2f}  {change_str}")
-            details = []
+            lines.append(f"<b>${_e(ticker)}</b>  {_e(snap.company_name)}")
+            lines.append(f"${snap.price:.2f}  {change_str}")
+
+            # Fundamentals row
+            fund = []
             if snap.market_cap_b:
-                details.append(f"Mkt cap ${_e(snap.market_cap_b)}B")
-            if snap.pe_ratio:
-                details.append(f"P/E {snap.pe_ratio:.1f}")
+                fund.append(f"Mkt cap ${_e(snap.market_cap_b)}B")
             if snap.week52_low and snap.week52_high:
-                details.append(f"52w low ${snap.week52_low:.2f} / high ${snap.week52_high:.2f}")
-            if details:
-                lines.append("  " + "   ·   ".join(details))
+                fund.append(f"52w ${snap.week52_low:.2f} – ${snap.week52_high:.2f}")
+            if fund:
+                lines.append("  " + "   ·   ".join(fund))
+
+            # Technical signals row
+            tech = []
+            if snap.rel_volume is not None:
+                vol_flag = " 🔥" if snap.rel_volume >= 2.0 else ""
+                tech.append(f"Volume {snap.rel_volume}x avg{vol_flag}")
+            if snap.ma_50 is not None and snap.above_50ma is not None:
+                ma_label = "above" if snap.above_50ma else "below"
+                ma_emoji = "✅" if snap.above_50ma else "⚠️"
+                tech.append(f"{ma_emoji} {ma_label} 50-day MA (${snap.ma_50:.2f})")
+            if tech:
+                lines.append("  " + "   ·   ".join(tech))
+            lines.append("")  # spacing between tickers
 
     lines += ["", "", f'<a href="{_e(tweet.url)}">View original post →</a>']
     return "\n".join(lines)

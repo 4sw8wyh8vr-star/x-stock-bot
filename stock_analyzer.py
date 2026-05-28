@@ -14,20 +14,41 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are a financial tweet analyst. Your job is to read a tweet and determine:
+You are a financial tweet analyst working for Adrien, a non-technical investor \
+who wants to understand WHY a stock is positioning to be a smart buy — not just \
+what it does.
 
-1. Whether it discusses specific stocks / equities (not crypto, bonds, or general market commentary).
-2. Which ticker symbols are mentioned or clearly implied.
-3. The author's apparent signal: BUY, SELL, HOLD, or WATCH (watching/researching, no clear direction).
-4. Your confidence in that signal: low, medium, or high.
-5. A plain-English summary of what the author is saying.
-6. A simple_explanation: a clear, jargon-free breakdown for a non-technical investor.
-   - Use a real-world analogy if a technical concept is involved (e.g. "Think of X like...")
-   - Explain WHY each stock mentioned matters in this context
-   - Translate any industry jargon into plain English immediately
-   - End with "Bottom line: ..." — one sentence on what this means for the investor
-   - Write in plain paragraphs only. No bullet points, no markdown, no # or * symbols.
-   Keep it to 3 to 5 short paragraphs.
+Your job is to read a tweet and produce a JSON response with these fields:
+
+1. is_stock_related — true if the tweet discusses specific stocks or equities.
+2. tickers — ticker symbols mentioned or clearly implied. Only include ones you are certain about.
+3. signal — the author's apparent direction: BUY, SELL, HOLD, WATCH, or NONE.
+4. confidence — your confidence in that signal: low, medium, or high.
+5. summary — 1 to 2 plain sentences summarising the author's view.
+6. simple_explanation — this is the most important field. Write it as if explaining \
+   to a smart friend who has never traded stocks. Structure it like this:
+
+   Paragraph 1 — THE BIG PICTURE: What macro trend or theme is this stock riding? \
+   Use a simple real-world analogy to make the trend tangible. \
+   e.g. "Think of AI data centers as cities that are upgrading their roads from copper to fiber optic..."
+
+   Paragraph 2 — WHY THIS COMPANY SPECIFICALLY: What is this company's unique role in that trend? \
+   Why is it hard to replace? Why does it matter that they do THIS thing and not another company?
+
+   Paragraph 3 — WHAT JUST CHANGED: What is the specific catalyst, news, or data point \
+   in this tweet that makes NOW an interesting time? Why is she posting about it today \
+   rather than six months ago?
+
+   Paragraph 4 — THE INVESTMENT LOGIC: Why does this look like a smart buy setup? \
+   What would have to be true for this to work out? What is the risk if she is wrong?
+
+   End with: "Bottom line: ..." — one sentence that captures the core reason to pay attention to this stock.
+
+   Rules for simple_explanation:
+   - Plain paragraphs only. No bullet points, no dashes, no markdown, no # or * symbols.
+   - Translate every piece of jargon immediately when you use it.
+   - Never use a ticker symbol without first saying what the company does in plain English.
+   - Keep each paragraph to 3 to 4 sentences.
 
 Respond ONLY with a valid JSON object — no markdown fences, no extra text:
 {
@@ -35,15 +56,12 @@ Respond ONLY with a valid JSON object — no markdown fences, no extra text:
   "tickers": ["AAPL", "NVDA"],
   "signal": "BUY" | "SELL" | "HOLD" | "WATCH" | "NONE",
   "confidence": "low" | "medium" | "high",
-  "summary": "1-2 sentence summary of the author's view.",
-  "simple_explanation": "Plain-English breakdown with analogy and bottom line."
+  "summary": "1-2 sentence summary.",
+  "simple_explanation": "Multi-paragraph plain-English investment thesis."
 }
 
-Rules:
-- Only include tickers you are highly confident about. Do not guess.
-- If the tweet is ambiguous or just a retweet caption, set is_stock_related to false.
-- Never fabricate ticker symbols.
-- simple_explanation must always be plain English — no jargon, no ticker symbols without explanation.
+If the tweet is not stock related, set is_stock_related to false and leave simple_explanation empty.
+Never fabricate ticker symbols.
 """
 
 
@@ -61,13 +79,17 @@ class TweetAnalysis:
 @dataclass
 class StockSnapshot:
     ticker: str
+    company_name: str
     price: float
     change_pct: float
     market_cap_b: float | None
     pe_ratio: float | None
     week52_low: float | None
     week52_high: float | None
-    company_name: str
+    # New technical signals
+    rel_volume: float | None        # today's volume ÷ 30-day average (e.g. 2.4 = 2.4x normal)
+    ma_50: float | None             # 50-day moving average price
+    above_50ma: bool | None         # is price currently above the 50-day MA?
 
 
 class StockAnalyzer:
@@ -80,7 +102,7 @@ class StockAnalyzer:
         try:
             message = self.client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=1024,
+                max_tokens=1500,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": text}],
             )
@@ -100,25 +122,40 @@ class StockAnalyzer:
             return TweetAnalysis()
 
     def get_stock_snapshots(self, tickers: list[str]) -> dict[str, StockSnapshot]:
-        """Fetch live price + fundamentals for each ticker using yfinance."""
+        """Fetch live price, fundamentals, and technical signals for each ticker."""
         results: dict[str, StockSnapshot] = {}
         for ticker in tickers:
             try:
-                info = yf.Ticker(ticker).fast_info
-                full_info = yf.Ticker(ticker).info  # slightly slower but has PE etc.
-                price = full_info.get("currentPrice") or full_info.get("regularMarketPrice", 0.0)
-                prev_close = full_info.get("previousClose") or full_info.get("regularMarketPreviousClose", price)
+                t = yf.Ticker(ticker)
+                info = t.info
+
+                price = info.get("currentPrice") or info.get("regularMarketPrice", 0.0)
+                prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose", price)
                 change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
-                mkt_cap = full_info.get("marketCap")
+                mkt_cap = info.get("marketCap")
+
+                # --- Technical signals ---
+                # Relative volume: today vs 30-day average
+                vol_today = info.get("volume") or info.get("regularMarketVolume")
+                vol_avg = info.get("averageVolume")  # ~3-month average from yfinance
+                rel_volume = round(vol_today / vol_avg, 1) if vol_today and vol_avg else None
+
+                # 50-day moving average
+                ma_50 = info.get("fiftyDayAverage")
+                above_50ma = (price > ma_50) if (price and ma_50) else None
+
                 results[ticker] = StockSnapshot(
                     ticker=ticker,
+                    company_name=info.get("shortName", ticker),
                     price=price,
                     change_pct=change_pct,
-                    market_cap_b=round(mkt_cap / 1e9, 1) if mkt_cap else None,
-                    pe_ratio=full_info.get("trailingPE"),
-                    week52_low=full_info.get("fiftyTwoWeekLow"),
-                    week52_high=full_info.get("fiftyTwoWeekHigh"),
-                    company_name=full_info.get("shortName", ticker),
+                    market_cap_b=round(mkt_cap / 1e9, 2) if mkt_cap else None,
+                    pe_ratio=info.get("trailingPE"),
+                    week52_low=info.get("fiftyTwoWeekLow"),
+                    week52_high=info.get("fiftyTwoWeekHigh"),
+                    rel_volume=rel_volume,
+                    ma_50=ma_50,
+                    above_50ma=above_50ma,
                 )
             except Exception as e:
                 logger.warning(f"Could not fetch data for {ticker}: {e}")
