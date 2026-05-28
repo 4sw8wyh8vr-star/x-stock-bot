@@ -20,21 +20,29 @@ You are a financial tweet analyst. Your job is to read a tweet and determine:
 2. Which ticker symbols are mentioned or clearly implied.
 3. The author's apparent signal: BUY, SELL, HOLD, or WATCH (watching/researching, no clear direction).
 4. Your confidence in that signal: low, medium, or high.
-5. A 1-2 sentence plain-English summary of what the author seems to be saying.
+5. A plain-English summary of what the author is saying.
+6. A simple_explanation: a clear, jargon-free breakdown written for someone who is NOT a finance expert.
+   - Use a real-world analogy if a technical concept is involved (e.g. "think of it like...")
+   - Explain WHY each stock mentioned matters in this context
+   - Translate any industry jargon into plain English
+   - End with a single "Bottom line:" sentence saying what this means for the investor
+   Keep it concise but clear — 3 to 6 short paragraphs max.
 
 Respond ONLY with a valid JSON object — no markdown fences, no extra text:
 {
   "is_stock_related": true | false,
-  "tickers": ["AAPL", "NVDA"],        // empty list if none
+  "tickers": ["AAPL", "NVDA"],
   "signal": "BUY" | "SELL" | "HOLD" | "WATCH" | "NONE",
   "confidence": "low" | "medium" | "high",
-  "summary": "Brief plain-English summary of the author's view."
+  "summary": "1-2 sentence summary of the author's view.",
+  "simple_explanation": "Plain-English breakdown with analogy and bottom line."
 }
 
 Rules:
 - Only include tickers you are highly confident about. Do not guess.
 - If the tweet is ambiguous or just a retweet caption, set is_stock_related to false.
 - Never fabricate ticker symbols.
+- simple_explanation must always be plain English — no jargon, no ticker symbols without explanation.
 """
 
 
@@ -45,6 +53,7 @@ class TweetAnalysis:
     signal: str = "NONE"
     confidence: str = "low"
     summary: str = ""
+    simple_explanation: str = ""
     raw: dict = field(default_factory=dict)
 
 
@@ -70,7 +79,7 @@ class StockAnalyzer:
         try:
             message = self.client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=512,
+                max_tokens=1024,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": text}],
             )
@@ -82,6 +91,7 @@ class StockAnalyzer:
                 signal=data.get("signal", "NONE"),
                 confidence=data.get("confidence", "low"),
                 summary=data.get("summary", ""),
+                simple_explanation=data.get("simple_explanation", ""),
                 raw=data,
             )
         except (json.JSONDecodeError, KeyError, anthropic.APIError) as e:

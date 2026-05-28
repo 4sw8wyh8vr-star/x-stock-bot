@@ -61,13 +61,18 @@ def build_message(tweet, analysis, snapshots: dict) -> str:
         "",
         f"<i>{_e(tweet.text)}</i>",
         "",
-        "🤖 <b>AI Assessment</b>",
-        f"{signal_emoji} Signal: <b>{_e(analysis.signal)}</b>   Confidence: {confidence_bar} ({_e(analysis.confidence)})",
-        f"💬 {_e(analysis.summary)}",
+        f"{signal_emoji} <b>{_e(analysis.signal)}</b>  {confidence_bar} {_e(analysis.confidence)} confidence",
     ]
 
+    # Plain-English breakdown
+    if analysis.simple_explanation:
+        lines += ["", "💡 <b>What this means</b>", _e(analysis.simple_explanation)]
+    elif analysis.summary:
+        lines += ["", f"💬 {_e(analysis.summary)}"]
+
+    # Live stock data
     if snapshots:
-        lines += ["", "📈 <b>Live Market Data</b>"]
+        lines += ["", "📈 <b>Live prices</b>"]
         for ticker, snap in snapshots.items():
             direction = "▲" if snap.change_pct >= 0 else "▼"
             lines.append(
