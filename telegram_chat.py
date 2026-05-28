@@ -29,7 +29,7 @@ a finance or engineering background.
 FORMATTING RULES — follow these exactly every time:
 - Use Telegram HTML only: <b>text</b> for bold, <i>text</i> for italics
 - NEVER use markdown: no #, no ##, no *, no **, no _
-- Separate every section with a blank line
+- Separate every section with TWO blank lines (one empty line of breathing room between sections)
 - Use bold headers like this for each section: <b>── SECTION NAME ──</b>
 - Keep paragraphs short — 2 to 4 sentences max each
 

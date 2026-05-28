@@ -61,6 +61,7 @@ def build_message(tweet, analysis, snapshots: dict) -> str:
         "",
         f"<i>{_e(tweet.text)}</i>",
         "",
+        "",
         f"<b>── SIGNAL ──</b>",
         f"{signal_emoji} {_e(analysis.signal)}   {confidence_bar} {_e(analysis.confidence).upper()} CONFIDENCE",
     ]
@@ -69,11 +70,13 @@ def build_message(tweet, analysis, snapshots: dict) -> str:
     if analysis.simple_explanation:
         lines += [
             "",
+            "",
             "<b>── WHAT THIS MEANS ──</b>",
             _e(analysis.simple_explanation),
         ]
     elif analysis.summary:
         lines += [
+            "",
             "",
             "<b>── SUMMARY ──</b>",
             _e(analysis.summary),
@@ -81,7 +84,7 @@ def build_message(tweet, analysis, snapshots: dict) -> str:
 
     # Live stock data
     if snapshots:
-        lines += ["", "<b>── LIVE PRICES ──</b>"]
+        lines += ["", "", "<b>── LIVE PRICES ──</b>"]
         for ticker, snap in snapshots.items():
             direction = "▲" if snap.change_pct >= 0 else "▼"
             change_str = f"{direction}{abs(snap.change_pct):.2f}%"
@@ -96,5 +99,5 @@ def build_message(tweet, analysis, snapshots: dict) -> str:
             if details:
                 lines.append("  " + "   ·   ".join(details))
 
-    lines += ["", f'<a href="{_e(tweet.url)}">View original post →</a>']
+    lines += ["", "", f'<a href="{_e(tweet.url)}">View original post →</a>']
     return "\n".join(lines)
