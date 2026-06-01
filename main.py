@@ -105,19 +105,29 @@ async def x_monitor_loop(
 
 async def main() -> None:
     config = Config()
-    monitor = XMonitor(config)
     analyzer = StockAnalyzer(config)
     telegram = TelegramBot(config)
 
-    # Shared tweet store — populated by x_monitor_loop, read by TelegramChatHandler
+    # Shared tweet store across all monitored accounts
     tweet_history: list[Tweet] = []
 
     chat = TelegramChatHandler(config, tweet_history)
 
-    await asyncio.gather(
-        x_monitor_loop(config, monitor, analyzer, telegram, tweet_history),
-        chat.run(),
-    )
+    # One monitor loop per account — all share the same analyzer, telegram, and tweet history
+    monitor_tasks = [
+        x_monitor_loop(
+            config,
+            XMonitor(config, username=username),
+            analyzer,
+            telegram,
+            tweet_history,
+        )
+        for username in config.X_USERNAMES
+    ]
+
+    logger.info("Monitoring %d account(s): %s", len(config.X_USERNAMES), ", ".join(f"@{u}" for u in config.X_USERNAMES))
+
+    await asyncio.gather(*monitor_tasks, chat.run())
 
 
 if __name__ == "__main__":

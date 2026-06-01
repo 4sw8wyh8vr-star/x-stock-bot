@@ -98,8 +98,9 @@ def _find_nested(obj, key):
 
 
 class XMonitor:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, username: Optional[str] = None):
         self.config = config
+        self.username = username or config.X_USERNAME   # allow per-account override
         self._cookies: dict = {}
         self._ct0: str = ""
         self._user_id: Optional[str] = None
@@ -153,7 +154,7 @@ class XMonitor:
             return self._user_id
 
         variables = json.dumps({
-            "screen_name": self.config.X_USERNAME,
+            "screen_name": self.username,
             "withSafetyModeUserFields": True,
         })
         params = {
@@ -182,9 +183,9 @@ class XMonitor:
         rest_ids = _find_nested(data, "rest_id")
         if not rest_ids:
             logger.error("Full response: %s", json.dumps(data)[:1000])
-            raise RuntimeError(f"Could not find user ID for @{self.config.X_USERNAME}")
+            raise RuntimeError(f"Could not find user ID for @{self.username}")
         self._user_id = rest_ids[0]
-        logger.info("Resolved @%s → user_id=%s", self.config.X_USERNAME, self._user_id)
+        logger.info("Resolved @%s → user_id=%s", self.username, self._user_id)
         return self._user_id
 
     async def get_new_tweets(self, since_id: Optional[str] = None, count: int = 20) -> list[Tweet]:
@@ -261,9 +262,9 @@ class XMonitor:
                 tweets.append(Tweet(
                     id=tweet_id,
                     text=text,
-                    author=self.config.X_USERNAME,
+                    author=self.username,
                     created_at=legacy.get("created_at", ""),
-                    url=f"https://x.com/{self.config.X_USERNAME}/status/{tweet_id}",
+                    url=f"https://x.com/{self.username}/status/{tweet_id}",
                 ))
 
         except Exception as e:

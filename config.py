@@ -16,8 +16,17 @@ def _require(key: str) -> str:
 
 
 class Config:
-    # The account you want to MONITOR (no @)
-    X_USERNAME: str = _require("X_USERNAME").lstrip("@")
+    # One or more X accounts to monitor — comma-separated, e.g. "alice,bob,carol"
+    X_USERNAMES: list[str] = [
+        u.strip().lstrip("@")
+        for u in _require("X_USERNAME").split(",")
+        if u.strip()
+    ]
+
+    # Keep X_USERNAME as the primary (first) account for backwards compatibility
+    @property
+    def X_USERNAME(self) -> str:
+        return self.X_USERNAMES[0]
 
     # Anthropic
     ANTHROPIC_API_KEY: str = _require("ANTHROPIC_API_KEY")
