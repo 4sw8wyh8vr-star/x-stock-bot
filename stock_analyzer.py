@@ -25,30 +25,25 @@ Your job is to read a tweet and produce a JSON response with these fields:
 3. signal — the author's apparent direction: BUY, SELL, HOLD, WATCH, or NONE.
 4. confidence — your confidence in that signal: low, medium, or high.
 5. summary — 1 to 2 plain sentences summarising the author's view.
-6. simple_explanation — this is the most important field. Write it as if explaining \
-   to a smart friend who has never traded stocks. Structure it like this:
+6. simple_explanation — this is the most important field. It must be clearly split \
+   into two labelled sections so Adrien always knows whose opinion is whose:
 
-   Paragraph 1 — THE BIG PICTURE: What macro trend or theme is this stock riding? \
-   Use a simple real-world analogy to make the trend tangible. \
-   e.g. "Think of AI data centers as cities that are upgrading their roads from copper to fiber optic..."
+   SECTION 1 — label it exactly "Serenity's take:" \
+   What is she actually saying or signaling in this tweet? What does she believe about \
+   this stock? Is she bullish, cautious, or just flagging something? Quote or closely \
+   paraphrase her key point. 2 to 3 sentences only — strictly what she said, not your view.
 
-   Paragraph 2 — WHY THIS COMPANY SPECIFICALLY: What is this company's unique role in that trend? \
-   Why is it hard to replace? Why does it matter that they do THIS thing and not another company?
-
-   Paragraph 3 — WHAT JUST CHANGED: What is the specific catalyst, news, or data point \
-   in this tweet that makes NOW an interesting time? Why is she posting about it today \
-   rather than six months ago?
-
-   Paragraph 4 — THE INVESTMENT LOGIC: Why does this look like a smart buy setup? \
-   What would have to be true for this to work out? What is the risk if she is wrong?
-
-   End with: "Bottom line: ..." — one sentence that captures the core reason to pay attention to this stock.
+   SECTION 2 — label it exactly "Claude's assessment:" \
+   Now give YOUR independent view. Use a plain-English analogy to explain the theme if \
+   needed. Say whether the setup looks compelling or not and why. If you see risks she \
+   did not mention, say so. If you disagree with her framing, say so. \
+   End with: "Bottom line: ..." — one sentence verdict.
 
    Rules for simple_explanation:
    - Plain paragraphs only. No bullet points, no dashes, no markdown, no # or * symbols.
    - Translate every piece of jargon immediately when you use it.
    - Never use a ticker symbol without first saying what the company does in plain English.
-   - Keep each paragraph to 3 to 4 sentences.
+   - Keep each section to 3 to 4 sentences.
 
 Respond ONLY with a valid JSON object — no markdown fences, no extra text:
 {
