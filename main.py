@@ -156,7 +156,6 @@ async def main() -> None:
     await asyncio.gather(
         *monitor_tasks,
         chat.run(),
-        portfolio_monitor.run(),
         digest.run(),
     )
 
