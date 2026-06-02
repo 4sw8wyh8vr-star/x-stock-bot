@@ -144,12 +144,52 @@ class PortfolioMonitor:
 
             rsi = _calculate_rsi(closes)
 
+            # ── Net Volume (approximation from OHLC) ──────────────────
+            # Estimates buying vs selling pressure using today's price range.
+            # Net vol > 0 = more buying; < 0 = more selling.
+            net_volume = None
+            if not hist.empty and vol_today:
+                today = hist.iloc[-1]
+                h, l, c = today["High"], today["Low"], today["Close"]
+                if h != l:
+                    buy_vol = vol_today * (c - l) / (h - l)
+                    sell_vol = vol_today * (h - c) / (h - l)
+                    net_volume = int(buy_vol - sell_vol)
+
+            # ── OBV (On-Balance Volume) ───────────────────────────────
+            # Cumulative indicator: rising OBV = smart money accumulating,
+            # falling OBV = distribution. We report the 10-day trend.
+            obv = None
+            obv_trend = None
+            if len(hist) >= 10:
+                obv_series = []
+                running = 0
+                prev_c = None
+                for _, row in hist.iterrows():
+                    if prev_c is not None:
+                        if row["Close"] > prev_c:
+                            running += row["Volume"]
+                        elif row["Close"] < prev_c:
+                            running -= row["Volume"]
+                    obv_series.append(running)
+                    prev_c = row["Close"]
+                obv = obv_series[-1]
+                obv_10d_ago = obv_series[-10]
+                if obv > obv_10d_ago * 1.02:
+                    obv_trend = "Rising ↑ (accumulation)"
+                elif obv < obv_10d_ago * 0.98:
+                    obv_trend = "Falling ↓ (distribution)"
+                else:
+                    obv_trend = "Flat →"
+
             return {
                 "ticker": ticker,
                 "company": info.get("shortName", ticker),
                 "price": price,
                 "change_pct": change_pct,
                 "rel_volume": rel_volume,
+                "net_volume": net_volume,
+                "obv_trend": obv_trend,
                 "ma_50": ma_50,
                 "above_50ma": above_50ma,
                 "rsi": rsi,
@@ -470,19 +510,33 @@ Near 52-week high: {"YES" if s.get('near_52w_high') else "no"}
                 )
 
         lines += ["", "<b>── TECHNICALS ──</b>"]
+
         if s.get("rel_volume") is not None:
-            vol_flag = " 🔥 unusual activity" if s["rel_volume"] >= VOL_SPIKE else ""
-            lines.append(f"Volume: {s['rel_volume']}x average{vol_flag}")
+            vol_flag = "  🔥 unusual activity" if s["rel_volume"] >= VOL_SPIKE else ""
+            lines.append(f"Volume:      {s['rel_volume']}x average{vol_flag}")
+
+        if s.get("net_volume") is not None:
+            nv = s["net_volume"]
+            nv_sign = "+" if nv >= 0 else ""
+            nv_label = "buying pressure" if nv >= 0 else "selling pressure"
+            lines.append(f"Net volume:  {nv_sign}{nv:,}  ({nv_label})")
+
+        if s.get("obv_trend"):
+            lines.append(f"OBV:         {s['obv_trend']}")
+
         if s.get("rsi") is not None:
-            rsi_note = " — oversold" if s["rsi"] <= RSI_OVERSOLD else " — overbought" if s["rsi"] >= RSI_OVERBOUGHT else ""
-            lines.append(f"RSI: {s['rsi']}{rsi_note}")
+            rsi_note = "  📉 oversold" if s["rsi"] <= RSI_OVERSOLD else "  ⚠️ overbought" if s["rsi"] >= RSI_OVERBOUGHT else ""
+            lines.append(f"RSI:         {s['rsi']}{rsi_note}")
+
         if s.get("ma_50") and s.get("above_50ma") is not None:
             ma_label = "✅ above" if s["above_50ma"] else "⚠️ below"
-            lines.append(f"50-day MA: ${s['ma_50']:.2f}  ({ma_label})")
+            lines.append(f"50-day MA:   ${s['ma_50']:.2f}  ({ma_label})")
+
         if s.get("week52_low") and s.get("week52_high"):
-            lines.append(f"52-week range: ${s['week52_low']:.2f} – ${s['week52_high']:.2f}")
+            lines.append(f"52w range:   ${s['week52_low']:.2f} – ${s['week52_high']:.2f}")
+
         if s.get("market_cap_b"):
-            lines.append(f"Market cap: ${s['market_cap_b']}B")
+            lines.append(f"Mkt cap:     ${s['market_cap_b']}B")
 
         return "\n".join(lines)
 
