@@ -275,9 +275,9 @@ class TelegramChatHandler:
 
         elif cmd == "/detail":
             if not self._portfolio_monitor or len(parts) < 2:
-                await self._send("Usage: /detail NVDA")
+                await self._send("Usage: /detail NVDA  or  /detail $NVDA")
                 return
-            ticker = parts[1].upper()
+            ticker = parts[1].upper().lstrip("$")
             await self._send_typing()
             msg = await self._portfolio_monitor.detail(ticker)
             await self._send(msg)
