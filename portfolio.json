@@ -1,0 +1,32 @@
+{
+  "watchlist": [],
+  "holdings": {
+    "NOW":  { "shares": 30,  "avg_cost": 104.25 },
+    "ARIS": { "shares": 20,  "avg_cost": 23.29  },
+    "CRML": { "shares": 50,  "avg_cost": 11.60  },
+    "COPX": { "shares": 15,  "avg_cost": 85.88  },
+    "OSS":  { "shares": 10,  "avg_cost": 17.95  },
+    "IONQ": { "shares": 20,  "avg_cost": 66.33  },
+    "EWJ":  { "shares": 10,  "avg_cost": 92.35  },
+    "MKSI": { "shares": 2,   "avg_cost": 318.00 },
+    "WPM":  { "shares": 5,   "avg_cost": 179.77 },
+    "DBA":  { "shares": 30,  "avg_cost": 27.95  },
+    "ITA":  { "shares": 4,   "avg_cost": 248.00 },
+    "GDXJ": { "shares": 10,  "avg_cost": 125.86 },
+    "RTX":  { "shares": 10,  "avg_cost": 197.46 },
+    "SIL":  { "shares": 30,  "avg_cost": 106.61 },
+    "GDX":  { "shares": 65,  "avg_cost": 102.13 },
+    "URNM": { "shares": 10,  "avg_cost": 75.24  },
+    "SILJ": { "shares": 35,  "avg_cost": 39.64  },
+    "FURY": { "shares": 100, "avg_cost": 1.04   },
+    "AGAG": { "shares": 500, "avg_cost": 0.83   },
+    "SMR":  { "shares": 50,  "avg_cost": 19.94  },
+    "SKP":  { "shares": 500, "avg_cost": 0.25   },
+    "TSLA": { "shares": 2,   "avg_cost": 289.26 },
+    "FLNC": { "shares": 30,  "avg_cost": 27.85  },
+    "IYT":  { "shares": 10,  "avg_cost": 84.29  },
+    "OKLO": { "shares": 5,   "avg_cost": null   },
+    "AAOI": { "shares": 5,   "avg_cost": 188.99 },
+    "NGT":  { "shares": 5,   "avg_cost": 129.80 }
+  }
+}

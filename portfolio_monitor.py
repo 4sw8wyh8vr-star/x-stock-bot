@@ -219,18 +219,21 @@ Near 52-week high: {"YES" if s.get('near_52w_high') else "no"}
         if s.get("near_52w_high"):
             fired.append(f"🏆 Near 52-week high (${s['week52_high']:.2f})")
 
-        # Check if this is a holding
+        # Check if this is a holding — show full P&L context
         holdings = self.store.get_holdings()
         holding_line = ""
         if ticker in holdings:
             h = holdings[ticker]
-            holding_value = h.shares * s["price"]
-            holding_line = f"\n{h.shares} shares  ·  Value: ${holding_value:,.0f}"
+            value = h.shares * s["price"]
+            day_pl = (s["change_pct"] / 100) * s["price"] * h.shares
+            day_sign = "+" if day_pl >= 0 else ""
+            holding_line = f"\n{h.shares} shares  ·  Value: ${value:,.2f}"
+            holding_line += f"\nDay P&amp;L: {day_sign}${day_pl:,.2f} ({day_sign}{s['change_pct']:.2f}%)"
             if h.avg_cost:
-                pl = (s["price"] - h.avg_cost) * h.shares
-                pl_pct = (s["price"] - h.avg_cost) / h.avg_cost * 100
-                pl_sign = "+" if pl >= 0 else ""
-                holding_line += f"\nAvg cost ${h.avg_cost:.2f}  ·  P&amp;L {pl_sign}${pl:,.0f} ({pl_sign}{pl_pct:.1f}%)"
+                open_pl = (s["price"] - h.avg_cost) * h.shares
+                open_pct = (s["price"] - h.avg_cost) / h.avg_cost * 100
+                op_sign = "+" if open_pl >= 0 else ""
+                holding_line += f"\nOpen P&amp;L: {op_sign}${open_pl:,.2f} ({op_sign}{open_pct:.2f}%)  Avg: ${h.avg_cost:.2f}"
 
         lines = [
             f"<b>── SIGNAL ALERT: ${_e(ticker)} ──</b>",
@@ -297,28 +300,41 @@ Near 52-week high: {"YES" if s.get('near_52w_high') else "no"}
                 s = await asyncio.to_thread(self._fetch_signals, ticker)
                 if not s:
                     lines.append(f"<b>${_e(ticker)}</b> — could not fetch data")
+                    lines.append("")
                     continue
 
-                direction = "▲" if s["change_pct"] >= 0 else "▼"
-                value = h.shares * s["price"]
+                price = s["price"]
+                value = h.shares * price
                 total_value += value
 
+                day_dir = "▲" if s["change_pct"] >= 0 else "▼"
+                day_pl = (s["change_pct"] / 100) * price * h.shares
+                day_sign = "+" if day_pl >= 0 else ""
+
                 lines.append(f"<b>${_e(ticker)}</b>  {_e(s['company'])}")
-                lines.append(f"${s['price']:.2f}  {direction}{abs(s['change_pct']):.1f}%")
-                lines.append(f"{h.shares} shares  ·  Value: ${value:,.0f}")
+                lines.append(f"${price:.2f}  {day_dir}{abs(s['change_pct']):.2f}%   Value: ${value:,.2f}")
 
+                # Open P&L (from avg cost)
                 if h.avg_cost:
-                    pl = (s["price"] - h.avg_cost) * h.shares
-                    pl_pct = (s["price"] - h.avg_cost) / h.avg_cost * 100
-                    sign = "+" if pl >= 0 else ""
-                    lines.append(f"Avg cost ${h.avg_cost:.2f}  ·  P&amp;L {sign}${pl:,.0f} ({sign}{pl_pct:.1f}%)")
+                    open_pl = (price - h.avg_cost) * h.shares
+                    open_pct = (price - h.avg_cost) / h.avg_cost * 100
+                    op_sign = "+" if open_pl >= 0 else ""
+                    lines.append(
+                        f"Open P&amp;L: {op_sign}${open_pl:,.2f} ({op_sign}{open_pct:.2f}%)   "
+                        f"Avg: ${h.avg_cost:.2f}"
+                    )
 
+                # Day P&L
+                lines.append(f"Day P&amp;L: {day_sign}${day_pl:,.2f} ({day_sign}{s['change_pct']:.2f}%)")
+
+                # Technical signals
                 tech = []
-                if s.get("rel_volume"):
+                if s.get("rel_volume") is not None:
                     vol_flag = " 🔥" if s["rel_volume"] >= VOL_SPIKE else ""
-                    tech.append(f"Vol {s['rel_volume']}x{vol_flag}")
-                if s.get("rsi"):
-                    tech.append(f"RSI {s['rsi']}")
+                    tech.append(f"Vol {s['rel_volume']}x avg{vol_flag}")
+                if s.get("rsi") is not None:
+                    rsi_flag = " 📉" if s["rsi"] <= RSI_OVERSOLD else " ⚠️" if s["rsi"] >= RSI_OVERBOUGHT else ""
+                    tech.append(f"RSI {s['rsi']}{rsi_flag}")
                 if s.get("above_50ma") is not None:
                     tech.append("✅ above 50MA" if s["above_50ma"] else "⚠️ below 50MA")
                 if tech:
@@ -326,7 +342,7 @@ Near 52-week high: {"YES" if s.get('near_52w_high') else "no"}
                 lines.append("")
 
             if total_value:
-                lines.append(f"<b>Total portfolio value: ${total_value:,.0f}</b>")
+                lines.append(f"<b>Total holdings value: ${total_value:,.2f}</b>")
                 lines.append("")
 
         if watchlist:
@@ -337,17 +353,18 @@ Near 52-week high: {"YES" if s.get('near_52w_high') else "no"}
                 s = await asyncio.to_thread(self._fetch_signals, ticker)
                 if not s:
                     lines.append(f"<b>${_e(ticker)}</b> — could not fetch")
+                    lines.append("")
                     continue
 
-                direction = "▲" if s["change_pct"] >= 0 else "▼"
+                day_dir = "▲" if s["change_pct"] >= 0 else "▼"
                 lines.append(f"<b>${_e(ticker)}</b>  {_e(s['company'])}")
-                lines.append(f"${s['price']:.2f}  {direction}{abs(s['change_pct']):.1f}%")
+                lines.append(f"${s['price']:.2f}  {day_dir}{abs(s['change_pct']):.2f}%")
 
                 tech = []
-                if s.get("rel_volume"):
+                if s.get("rel_volume") is not None:
                     vol_flag = " 🔥" if s["rel_volume"] >= VOL_SPIKE else ""
-                    tech.append(f"Vol {s['rel_volume']}x{vol_flag}")
-                if s.get("rsi"):
+                    tech.append(f"Vol {s['rel_volume']}x avg{vol_flag}")
+                if s.get("rsi") is not None:
                     tech.append(f"RSI {s['rsi']}")
                 if s.get("above_50ma") is not None:
                     tech.append("✅ above 50MA" if s["above_50ma"] else "⚠️ below 50MA")
