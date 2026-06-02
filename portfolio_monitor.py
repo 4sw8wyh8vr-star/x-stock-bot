@@ -91,7 +91,8 @@ class PortfolioMonitor:
         logger.info("Portfolio monitor started")
         while True:
             try:
-                tickers = self.store.all_tickers()
+                # Only auto-scan holdings — watchlist is on-demand via /portfolio
+                tickers = list(self.store.get_holdings().keys())
                 if tickers and _is_market_hours():
                     await self._scan_all(tickers)
                 elif tickers:
