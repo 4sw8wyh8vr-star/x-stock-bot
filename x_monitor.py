@@ -16,6 +16,7 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 COOKIES_FILE = os.path.join(os.path.dirname(__file__), "x_cookies.json")
+LAST_IDS_FILE = os.path.join(os.path.dirname(__file__), "last_seen_ids.json")
 
 # X's internal web client bearer token (public, same for all web users)
 BEARER = (
@@ -95,6 +96,30 @@ def _find_nested(obj, key):
         for item in obj:
             results.extend(_find_nested(item, key))
     return results
+
+
+def _load_last_ids() -> dict:
+    try:
+        if os.path.exists(LAST_IDS_FILE):
+            with open(LAST_IDS_FILE) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_last_id(username: str, tweet_id: str) -> None:
+    ids = _load_last_ids()
+    ids[username.lower()] = tweet_id
+    try:
+        with open(LAST_IDS_FILE, "w") as f:
+            json.dump(ids, f)
+    except Exception as e:
+        logger.warning("Could not save last_id for @%s: %s", username, e)
+
+
+def load_last_id(username: str) -> Optional[str]:
+    return _load_last_ids().get(username.lower())
 
 
 class XMonitor:
@@ -272,5 +297,7 @@ class XMonitor:
             return []
 
         tweets.sort(key=lambda t: t.id)
+        if tweets:
+            _save_last_id(self.username, tweets[-1].id)
         logger.info("Found %d new tweet(s)", len(tweets))
         return tweets

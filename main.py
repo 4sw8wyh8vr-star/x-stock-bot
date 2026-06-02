@@ -14,7 +14,7 @@ from scheduled_digest import ScheduledDigest
 from stock_analyzer import StockAnalyzer
 from telegram_bot import TelegramBot, build_message
 from telegram_chat import TelegramChatHandler
-from x_monitor import Tweet, XMonitor
+from x_monitor import Tweet, XMonitor, load_last_id
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,19 +49,29 @@ async def x_monitor_loop(
 
     logger.info(
         "X monitor started — watching @%s every %ds, min confidence=%s",
-        config.X_USERNAME,
+        monitor.username,
         config.POLL_INTERVAL_SECONDS,
         config.MIN_CONFIDENCE,
     )
 
-    # Seed: fetch the most recent 40 tweets for initial history
+    # Use saved last_id if available (survives restarts without missing tweets)
+    saved_id = load_last_id(monitor.username)
     seed_tweets = await monitor.get_new_tweets(count=40)
     _merge_tweets(tweet_history, seed_tweets)
-    last_id = seed_tweets[-1].id if seed_tweets else None
-    logger.info(
-        "Seeded with %d tweets (last_id=%s, history size=%d)",
-        len(seed_tweets), last_id, len(tweet_history),
-    )
+
+    if saved_id:
+        last_id = saved_id
+        logger.info(
+            "@%s resuming from saved last_id=%s (skipping %d already-seen tweets)",
+            monitor.username, last_id,
+            sum(1 for t in seed_tweets if t.id <= last_id),
+        )
+    else:
+        last_id = seed_tweets[-1].id if seed_tweets else None
+        logger.info(
+            "@%s seeded with %d tweets (last_id=%s)",
+            monitor.username, len(seed_tweets), last_id,
+        )
 
     while True:
         try:
