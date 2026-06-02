@@ -10,6 +10,7 @@ import logging
 from config import Config
 from portfolio_monitor import PortfolioMonitor
 from portfolio_store import PortfolioStore
+from scheduled_digest import ScheduledDigest
 from stock_analyzer import StockAnalyzer
 from telegram_bot import TelegramBot, build_message
 from telegram_chat import TelegramChatHandler
@@ -115,6 +116,8 @@ async def main() -> None:
     # Shared tweet store across all monitored accounts
     tweet_history: list[Tweet] = []
 
+    digest = ScheduledDigest(config, store, portfolio_monitor)
+
     chat = TelegramChatHandler(
         config,
         tweet_history,
@@ -140,7 +143,12 @@ async def main() -> None:
         ", ".join(f"@{u}" for u in config.X_USERNAMES),
     )
 
-    await asyncio.gather(*monitor_tasks, chat.run(), portfolio_monitor.run())
+    await asyncio.gather(
+        *monitor_tasks,
+        chat.run(),
+        portfolio_monitor.run(),
+        digest.run(),
+    )
 
 
 if __name__ == "__main__":
