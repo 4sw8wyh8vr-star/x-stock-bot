@@ -144,24 +144,25 @@ class PortfolioMonitor:
 
             rsi = _calculate_rsi(closes)
 
-            # ── Net Volume (approximation from OHLC) ──────────────────
-            # Estimates buying vs selling pressure using today's price range.
-            # Net vol > 0 = more buying; < 0 = more selling.
+            # ── Net Volume (5-day cumulative) ─────────────────────────
+            # Sums estimated buying minus selling pressure over last 5 days.
+            # Positive = net buying; negative = net selling.
             net_volume = None
-            if not hist.empty and vol_today:
-                today = hist.iloc[-1]
-                h, l, c = today["High"], today["Low"], today["Close"]
-                if h != l:
-                    buy_vol = vol_today * (c - l) / (h - l)
-                    sell_vol = vol_today * (h - c) / (h - l)
-                    net_volume = int(buy_vol - sell_vol)
+            if len(hist) >= 5:
+                net_vol_5d = 0
+                for _, row in hist.iloc[-5:].iterrows():
+                    h, l, c, v = row["High"], row["Low"], row["Close"], row["Volume"]
+                    if h != l and v:
+                        buy_vol = v * (c - l) / (h - l)
+                        sell_vol = v * (h - c) / (h - l)
+                        net_vol_5d += buy_vol - sell_vol
+                net_volume = int(net_vol_5d)
 
-            # ── OBV (On-Balance Volume) ───────────────────────────────
-            # Cumulative indicator: rising OBV = smart money accumulating,
-            # falling OBV = distribution. We report the 10-day trend.
-            obv = None
+            # ── OBV (On-Balance Volume, 5-day trend) ──────────────────
+            # Cumulative indicator built from 3mo of data.
+            # Trend compares today vs 5 trading days ago.
             obv_trend = None
-            if len(hist) >= 10:
+            if len(hist) >= 6:
                 obv_series = []
                 running = 0
                 prev_c = None
@@ -173,11 +174,11 @@ class PortfolioMonitor:
                             running -= row["Volume"]
                     obv_series.append(running)
                     prev_c = row["Close"]
-                obv = obv_series[-1]
-                obv_10d_ago = obv_series[-10]
-                if obv > obv_10d_ago * 1.02:
+                obv_now = obv_series[-1]
+                obv_5d_ago = obv_series[-6]
+                if obv_now > obv_5d_ago * 1.02:
                     obv_trend = "Rising ↑ (accumulation)"
-                elif obv < obv_10d_ago * 0.98:
+                elif obv_now < obv_5d_ago * 0.98:
                     obv_trend = "Falling ↓ (distribution)"
                 else:
                     obv_trend = "Flat →"
