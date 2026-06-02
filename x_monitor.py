@@ -221,9 +221,10 @@ class XMonitor:
             async with httpx.AsyncClient(cookies=self._cookies, follow_redirects=True) as client:
                 user_id = await self._get_user_id(client)
 
+                # Always fetch 40 so we catch multiple posts within one poll window
                 variables = json.dumps({
                     "userId": user_id,
-                    "count": count,
+                    "count": max(count, 40),
                     "includePromotedContent": False,
                     "withQuickPromoteEligibilityTweetFields": False,
                     "withVoice": True,
