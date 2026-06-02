@@ -9,6 +9,7 @@ import html
 import logging
 from datetime import date, datetime, time
 
+import anthropic
 import httpx
 import pytz
 
@@ -85,6 +86,7 @@ class ScheduledDigest:
         self.store = store
         self.pm = portfolio_monitor
         self.base_url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
+        self.claude = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
         self._sent_morning: date | None = None
         self._sent_close: date | None = None
 
@@ -116,6 +118,84 @@ class ScheduledDigest:
             await self._send_digest(mode="close")
             self._sent_close = today
 
+    async def _get_assessments(self, stocks: list[tuple], mode: str) -> dict[str, str]:
+        """Ask Claude for a 2-sentence assessment of each stock's setup."""
+        if not stocks:
+            return {}
+
+        context_lines = []
+        for item in stocks:
+            ticker = item[0]
+            s = item[1]
+            h = item[2] if len(item) > 2 else None
+
+            open_pl_str = ""
+            if h and h.avg_cost and s.get("price"):
+                open_pct = (s["price"] - h.avg_cost) / h.avg_cost * 100
+                open_pl_str = f", open P&L {open_pct:+.1f}% from avg ${h.avg_cost:.2f}"
+
+            signals = []
+            if s.get("rel_volume"):
+                signals.append(f"volume {s['rel_volume']}x average")
+            if s.get("rsi"):
+                signals.append(f"RSI {s['rsi']}")
+            if s.get("above_50ma") is not None:
+                signals.append("above 50MA" if s["above_50ma"] else "below 50MA")
+            if s.get("obv_trend"):
+                signals.append(f"OBV {s['obv_trend']}")
+            if s.get("net_volume") is not None:
+                nv = s["net_volume"]
+                signals.append(f"5-day net volume {'+' if nv >= 0 else ''}{nv:,}")
+
+            context_lines.append(
+                f"{ticker} ({s.get('company', ticker)}): "
+                f"${s.get('price', 0):.2f}, {'+' if s.get('change_pct', 0) >= 0 else ''}"
+                f"{s.get('change_pct', 0):.1f}% today{open_pl_str}. "
+                f"Signals: {', '.join(signals) if signals else 'none notable'}"
+            )
+
+        if mode == "morning":
+            system = (
+                "You are giving Adrien, a non-technical investor, his pre-market morning brief. "
+                "For each stock listed, write exactly 2 plain-English sentences: "
+                "1) What the pre-market setup or signals mean. "
+                "2) What specifically to watch for or be aware of when the market opens. "
+                "Be direct — give a real opinion, not generic commentary. "
+                "No jargon without explanation. No markdown symbols. No bullet points. "
+                "Format your response as: TICKER: [your 2 sentences]. One stock per line."
+            )
+        else:
+            system = (
+                "You are giving Adrien, a non-technical investor, his end-of-day recap. "
+                "For each stock listed, write exactly 2 plain-English sentences: "
+                "1) What today's price action and volume signals tell you about whether this is accumulation, distribution, or noise. "
+                "2) What it means for tomorrow — hold, watch for continuation, or be cautious. "
+                "Be direct. No jargon without explanation. No markdown. No bullet points. "
+                "Format your response as: TICKER: [your 2 sentences]. One stock per line."
+            )
+
+        user_msg = "\n".join(context_lines)
+
+        try:
+            response = await asyncio.to_thread(
+                self.claude.messages.create,
+                model="claude-sonnet-4-6",
+                max_tokens=800,
+                system=system,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            raw = response.content[0].text.strip()
+            assessments = {}
+            for line in raw.split("\n"):
+                if ":" in line:
+                    ticker_part, _, text = line.partition(":")
+                    t = ticker_part.strip().upper()
+                    assessments[t] = text.strip()
+            return assessments
+        except Exception as e:
+            logger.error("Claude assessment failed: %s", e)
+            return {}
+
     async def _send_digest(self, mode: str) -> None:
         holdings = self.store.get_holdings()
         watchlist = self.store.get_watchlist()
@@ -141,20 +221,22 @@ class ScheduledDigest:
         holding_signals.sort(key=lambda x: _score(x[1], x[2]), reverse=True)
         top_holdings = holding_signals[:5]
 
+        assessments_h = await self._get_assessments(top_holdings, mode)
+
         if top_holdings:
             lines = [f"<b>{_e(header_h)}</b>", f"<i>{subheader}</i>", ""]
             for ticker, s, h in top_holdings:
                 lines.append(_format_row(ticker, s, h, mode))
+                if ticker in assessments_h:
+                    lines.append(f"  <i>{_e(assessments_h[ticker])}</i>")
                 lines.append("")
             await self._send("\n".join(lines))
         else:
             await self._send(f"<b>{_e(header_h)}</b>\n\nNo holdings data available.")
 
-        # Small gap between messages
         await asyncio.sleep(2)
 
         # ── Watchlist digest ──
-        # Only scan watchlist tickers not already in holdings
         holding_keys = set(holdings.keys())
         watch_signals = []
         for ticker in watchlist:
@@ -167,10 +249,16 @@ class ScheduledDigest:
         watch_signals.sort(key=lambda x: _score(x[1]), reverse=True)
         top_watch = watch_signals[:5]
 
+        assessments_w = await self._get_assessments(
+            [(t, s) for t, s in top_watch], mode
+        )
+
         if top_watch:
             lines = [f"<b>{_e(header_w)}</b>", f"<i>{subheader}</i>", ""]
             for ticker, s in top_watch:
                 lines.append(_format_row(ticker, s, mode=mode))
+                if ticker in assessments_w:
+                    lines.append(f"  <i>{_e(assessments_w[ticker])}</i>")
                 lines.append("")
             await self._send("\n".join(lines))
         else:
