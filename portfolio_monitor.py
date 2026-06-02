@@ -280,97 +280,193 @@ Near 52-week high: {"YES" if s.get('near_52w_high') else "no"}
     # ------------------------------------------------------------------ #
 
     async def snapshot(self) -> str:
-        """Return a formatted portfolio + watchlist summary for /portfolio command."""
+        """Return a focused digest — summary + only what needs attention."""
         holdings = self.store.get_holdings()
         watchlist = self.store.get_watchlist()
 
         if not holdings and not watchlist:
             return (
-                "You have no holdings or watchlist set up yet.\n\n"
-                "Use /holding NVDA 50 to add a holding or /watch NVDA to add to your watchlist."
+                "Nothing set up yet.\n\n"
+                "Use /holding NVDA 50 820 to add a holding\n"
+                "or /watch NVDA to add to your watchlist.\n\n"
+                "Use /detail NVDA to drill into any stock."
             )
 
-        lines = []
+        # Fetch all signals concurrently
+        all_tickers = list(holdings.keys()) + [t for t in watchlist if t not in holdings]
+        signals: dict[str, dict] = {}
+        for ticker in all_tickers:
+            s = await asyncio.to_thread(self._fetch_signals, ticker)
+            if s:
+                signals[ticker] = s
+
+        # ── Portfolio-level totals ──
         total_value = 0.0
+        total_open_pl = 0.0
+        total_day_pl = 0.0
+        for ticker, h in holdings.items():
+            s = signals.get(ticker)
+            if not s or not s["price"]:
+                continue
+            value = h.shares * s["price"]
+            total_value += value
+            total_day_pl += (s["change_pct"] / 100) * value
+            if h.avg_cost:
+                total_open_pl += (s["price"] - h.avg_cost) * h.shares
 
-        if holdings:
-            lines.append("<b>── YOUR HOLDINGS ──</b>")
-            lines.append("")
-            for ticker, h in holdings.items():
-                s = await asyncio.to_thread(self._fetch_signals, ticker)
-                if not s:
-                    lines.append(f"<b>${_e(ticker)}</b> — could not fetch data")
-                    lines.append("")
-                    continue
+        # ── Categorise holdings ──
+        flagged = []      # needs attention
+        top_movers = []   # significant day moves
+        clean = []        # nothing notable
 
-                price = s["price"]
-                value = h.shares * price
-                total_value += value
+        for ticker, h in holdings.items():
+            s = signals.get(ticker)
+            if not s:
+                continue
+            flags = []
+            if s.get("rel_volume") and s["rel_volume"] >= VOL_SPIKE:
+                flags.append(f"🔥 Vol {s['rel_volume']}x")
+            if s.get("rsi") and s["rsi"] <= RSI_OVERSOLD:
+                flags.append(f"📉 RSI {s['rsi']} oversold")
+            if s.get("rsi") and s["rsi"] >= RSI_OVERBOUGHT:
+                flags.append(f"⚠️ RSI {s['rsi']} overbought")
+            if s.get("above_50ma") is False:
+                flags.append("⚠️ below 50MA")
+            if h.avg_cost and ((s["price"] - h.avg_cost) / h.avg_cost * 100) <= -20:
+                open_pct = (s["price"] - h.avg_cost) / h.avg_cost * 100
+                flags.append(f"🔴 down {open_pct:.0f}% from cost")
 
+            day_dir = "▲" if s["change_pct"] >= 0 else "▼"
+            summary = f"<b>${_e(ticker)}</b>  {day_dir}{abs(s['change_pct']):.1f}%"
+            if flags:
+                flagged.append((ticker, summary, flags, s))
+            elif abs(s["change_pct"]) >= 2.5:
+                top_movers.append((ticker, s))
+            else:
+                clean.append(ticker)
+
+        # Sort movers biggest first
+        top_movers.sort(key=lambda x: abs(x[1]["change_pct"]), reverse=True)
+
+        lines = []
+
+        # ── Summary header ──
+        lines += ["<b>── PORTFOLIO SUMMARY ──</b>", ""]
+        if total_value:
+            lines.append(f"Total value:  <b>${total_value:,.0f}</b>")
+        day_sign = "+" if total_day_pl >= 0 else ""
+        open_sign = "+" if total_open_pl >= 0 else ""
+        lines.append(f"Day P&amp;L:    {day_sign}${total_day_pl:,.0f}")
+        lines.append(f"Open P&amp;L:   {open_sign}${total_open_pl:,.0f}")
+
+        # ── Flagged ──
+        if flagged:
+            lines += ["", "", "<b>── NEEDS ATTENTION ──</b>", ""]
+            for ticker, summary, flags, s in flagged:
+                h = holdings.get(ticker)
+                open_str = ""
+                if h and h.avg_cost:
+                    open_pct = (s["price"] - h.avg_cost) / h.avg_cost * 100
+                    op_sign = "+" if open_pct >= 0 else ""
+                    open_str = f"  ({op_sign}{open_pct:.1f}% from cost)"
+                lines.append(f"{summary}{open_str}")
+                lines.append("  " + "   ·   ".join(flags))
+                lines.append("")
+
+        # ── Notable movers ──
+        if top_movers:
+            lines += ["", "<b>── MOVING TODAY ──</b>", ""]
+            for ticker, s in top_movers[:6]:
+                h = holdings.get(ticker)
                 day_dir = "▲" if s["change_pct"] >= 0 else "▼"
-                day_pl = (s["change_pct"] / 100) * price * h.shares
-                day_sign = "+" if day_pl >= 0 else ""
+                day_pl = (s["change_pct"] / 100) * s["price"] * h.shares if h else 0
+                pl_sign = "+" if day_pl >= 0 else ""
+                lines.append(
+                    f"<b>${_e(ticker)}</b>  {day_dir}{abs(s['change_pct']):.1f}%   "
+                    f"{pl_sign}${day_pl:,.0f} today"
+                )
 
-                lines.append(f"<b>${_e(ticker)}</b>  {_e(s['company'])}")
-                lines.append(f"${price:.2f}  {day_dir}{abs(s['change_pct']):.2f}%   Value: ${value:,.2f}")
-
-                # Open P&L (from avg cost)
-                if h.avg_cost:
-                    open_pl = (price - h.avg_cost) * h.shares
-                    open_pct = (price - h.avg_cost) / h.avg_cost * 100
-                    op_sign = "+" if open_pl >= 0 else ""
-                    lines.append(
-                        f"Open P&amp;L: {op_sign}${open_pl:,.2f} ({op_sign}{open_pct:.2f}%)   "
-                        f"Avg: ${h.avg_cost:.2f}"
-                    )
-
-                # Day P&L
-                lines.append(f"Day P&amp;L: {day_sign}${day_pl:,.2f} ({day_sign}{s['change_pct']:.2f}%)")
-
-                # Technical signals
-                tech = []
-                if s.get("rel_volume") is not None:
-                    vol_flag = " 🔥" if s["rel_volume"] >= VOL_SPIKE else ""
-                    tech.append(f"Vol {s['rel_volume']}x avg{vol_flag}")
-                if s.get("rsi") is not None:
-                    rsi_flag = " 📉" if s["rsi"] <= RSI_OVERSOLD else " ⚠️" if s["rsi"] >= RSI_OVERBOUGHT else ""
-                    tech.append(f"RSI {s['rsi']}{rsi_flag}")
-                if s.get("above_50ma") is not None:
-                    tech.append("✅ above 50MA" if s["above_50ma"] else "⚠️ below 50MA")
-                if tech:
-                    lines.append("  " + "   ·   ".join(tech))
-                lines.append("")
-
-            if total_value:
-                lines.append(f"<b>Total holdings value: ${total_value:,.2f}</b>")
-                lines.append("")
-
-        if watchlist:
-            lines.append("")
-            lines.append("<b>── WATCHLIST ──</b>")
-            lines.append("")
-            for ticker in watchlist:
-                s = await asyncio.to_thread(self._fetch_signals, ticker)
-                if not s:
-                    lines.append(f"<b>${_e(ticker)}</b> — could not fetch")
-                    lines.append("")
-                    continue
-
+        # ── Watchlist alerts ──
+        watch_flags = []
+        for ticker in watchlist:
+            s = signals.get(ticker)
+            if not s:
+                continue
+            flags = []
+            if s.get("rel_volume") and s["rel_volume"] >= VOL_SPIKE:
+                flags.append(f"🔥 Vol {s['rel_volume']}x")
+            if s.get("rsi") and s["rsi"] <= RSI_OVERSOLD:
+                flags.append(f"📉 RSI {s['rsi']} oversold")
+            if s.get("rsi") and s["rsi"] >= RSI_OVERBOUGHT:
+                flags.append(f"⚠️ RSI {s['rsi']} overbought")
+            if flags:
                 day_dir = "▲" if s["change_pct"] >= 0 else "▼"
-                lines.append(f"<b>${_e(ticker)}</b>  {_e(s['company'])}")
-                lines.append(f"${s['price']:.2f}  {day_dir}{abs(s['change_pct']):.2f}%")
+                watch_flags.append((ticker, s, flags))
 
-                tech = []
-                if s.get("rel_volume") is not None:
-                    vol_flag = " 🔥" if s["rel_volume"] >= VOL_SPIKE else ""
-                    tech.append(f"Vol {s['rel_volume']}x avg{vol_flag}")
-                if s.get("rsi") is not None:
-                    tech.append(f"RSI {s['rsi']}")
-                if s.get("above_50ma") is not None:
-                    tech.append("✅ above 50MA" if s["above_50ma"] else "⚠️ below 50MA")
-                if tech:
-                    lines.append("  " + "   ·   ".join(tech))
+        if watch_flags:
+            lines += ["", "", "<b>── WATCHLIST ALERTS ──</b>", ""]
+            for ticker, s, flags in watch_flags:
+                day_dir = "▲" if s["change_pct"] >= 0 else "▼"
+                lines.append(f"<b>${_e(ticker)}</b>  {day_dir}{abs(s['change_pct']):.1f}%")
+                lines.append("  " + "   ·   ".join(flags))
                 lines.append("")
+
+        # ── All clear ──
+        if clean:
+            lines += ["", f"<b>✅ {len(clean)} positions tracking normally</b>"]
+            lines.append(f"<i>{', '.join(f'${t}' for t in clean)}</i>")
+
+        lines += ["", "<i>Type /detail TICKER for full breakdown on any stock</i>"]
+
+        return "\n".join(lines)
+
+    async def detail(self, ticker: str) -> str:
+        """Full breakdown for a single stock."""
+        ticker = ticker.upper()
+        holdings = self.store.get_holdings()
+        s = await asyncio.to_thread(self._fetch_signals, ticker)
+
+        if not s:
+            return f"Couldn't fetch data for ${_e(ticker)}. Check the ticker symbol."
+
+        h = holdings.get(ticker)
+        day_dir = "▲" if s["change_pct"] >= 0 else "▼"
+        lines = [
+            f"<b>── ${_e(ticker)}  {_e(s['company'])} ──</b>",
+            "",
+            f"${s['price']:.2f}  {day_dir}{abs(s['change_pct']):.2f}%",
+        ]
+
+        if h:
+            value = h.shares * s["price"]
+            day_pl = (s["change_pct"] / 100) * value
+            day_sign = "+" if day_pl >= 0 else ""
+            lines += [
+                f"{h.shares} shares  ·  Value: ${value:,.2f}",
+                f"Day P&amp;L: {day_sign}${day_pl:,.2f} ({day_sign}{s['change_pct']:.2f}%)",
+            ]
+            if h.avg_cost:
+                open_pl = (s["price"] - h.avg_cost) * h.shares
+                open_pct = (s["price"] - h.avg_cost) / h.avg_cost * 100
+                op_sign = "+" if open_pl >= 0 else ""
+                lines.append(
+                    f"Open P&amp;L: {op_sign}${open_pl:,.2f} ({op_sign}{open_pct:.2f}%)  Avg: ${h.avg_cost:.2f}"
+                )
+
+        lines += ["", "<b>── TECHNICALS ──</b>"]
+        if s.get("rel_volume") is not None:
+            vol_flag = " 🔥 unusual activity" if s["rel_volume"] >= VOL_SPIKE else ""
+            lines.append(f"Volume: {s['rel_volume']}x average{vol_flag}")
+        if s.get("rsi") is not None:
+            rsi_note = " — oversold" if s["rsi"] <= RSI_OVERSOLD else " — overbought" if s["rsi"] >= RSI_OVERBOUGHT else ""
+            lines.append(f"RSI: {s['rsi']}{rsi_note}")
+        if s.get("ma_50") and s.get("above_50ma") is not None:
+            ma_label = "✅ above" if s["above_50ma"] else "⚠️ below"
+            lines.append(f"50-day MA: ${s['ma_50']:.2f}  ({ma_label})")
+        if s.get("week52_low") and s.get("week52_high"):
+            lines.append(f"52-week range: ${s['week52_low']:.2f} – ${s['week52_high']:.2f}")
+        if s.get("market_cap_b"):
+            lines.append(f"Market cap: ${s['market_cap_b']}B")
 
         return "\n".join(lines)
 

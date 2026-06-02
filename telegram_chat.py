@@ -252,6 +252,15 @@ class TelegramChatHandler:
             await self._send("Fetching your portfolio... give me a moment.")
             await self._portfolio_monitor.send_snapshot()
 
+        elif cmd == "/detail":
+            if not self._portfolio_monitor or len(parts) < 2:
+                await self._send("Usage: /detail NVDA")
+                return
+            ticker = parts[1].upper()
+            await self._send_typing()
+            msg = await self._portfolio_monitor.detail(ticker)
+            await self._send(msg)
+
         elif cmd == "/scan":
             if not self._portfolio_monitor:
                 await self._send("Portfolio tracking not available.")
