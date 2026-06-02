@@ -214,8 +214,7 @@ class TelegramChatHandler:
                 return
             await self._send("Fetching watchlist... give me a moment.")
             if self._portfolio_monitor:
-                msg = await self._portfolio_monitor.snapshot()
-                await self._send(msg)
+                await self._portfolio_monitor.send_snapshot()
             else:
                 await self._send("  ".join(f"${t}" for t in wl))
 
@@ -251,8 +250,7 @@ class TelegramChatHandler:
                 await self._send("Portfolio tracking not available.")
                 return
             await self._send("Fetching your portfolio... give me a moment.")
-            msg = await self._portfolio_monitor.snapshot()
-            await self._send(msg)
+            await self._portfolio_monitor.send_snapshot()
 
         elif cmd == "/scan":
             if not self._portfolio_monitor:

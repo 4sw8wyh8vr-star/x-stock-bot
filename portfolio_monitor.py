@@ -373,3 +373,41 @@ Near 52-week high: {"YES" if s.get('near_52w_high') else "no"}
                 lines.append("")
 
         return "\n".join(lines)
+
+    async def send_snapshot(self) -> None:
+        """Fetch snapshot and send to Telegram, splitting if needed."""
+        msg = await self.snapshot()
+        # Split into chunks under Telegram's 4096 char limit
+        chunk_size = 3800
+        chunks = []
+        current = ""
+        for line in msg.split("\n"):
+            if len(current) + len(line) + 1 > chunk_size:
+                chunks.append(current)
+                current = line
+            else:
+                current = current + "\n" + line if current else line
+        if current:
+            chunks.append(current)
+
+        for i, chunk in enumerate(chunks):
+            if len(chunks) > 1:
+                header = f"<b>── PORTFOLIO ({i+1}/{len(chunks)}) ──</b>\n\n"
+                chunk = header + chunk
+            await self._send(chunk)
+
+    async def _send(self, text: str) -> None:
+        async with httpx.AsyncClient() as client:
+            try:
+                await client.post(
+                    f"{self.base_url}/sendMessage",
+                    json={
+                        "chat_id": self.config.TELEGRAM_CHAT_ID,
+                        "text": text,
+                        "parse_mode": "HTML",
+                        "disable_web_page_preview": True,
+                    },
+                    timeout=10.0,
+                )
+            except Exception as e:
+                logger.error("Failed to send message: %s", e)
