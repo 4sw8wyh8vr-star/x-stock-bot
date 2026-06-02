@@ -109,5 +109,18 @@
       "shares": 500,
       "avg_cost": 0.83
     }
-  }
+  },
+  "muted": [
+    "GDX",
+    "GDXJ",
+    "SIL",
+    "SILJ",
+    "WPM",
+    "FURY",
+    "AGAG.CN",
+    "SKP.V",
+    "NGT.TO",
+    "ARIS",
+    "URNM"
+  ]
 }

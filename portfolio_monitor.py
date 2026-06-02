@@ -162,6 +162,8 @@ class PortfolioMonitor:
 
     def _should_alert(self, s: dict) -> bool:
         """Only fire an alert if at least one meaningful signal is present."""
+        if self.store.is_muted(s["ticker"]):
+            return False
         if s.get("rel_volume") and s["rel_volume"] >= VOL_SPIKE:
             return True
         if s.get("rsi") and (s["rsi"] <= RSI_OVERSOLD or s["rsi"] >= RSI_OVERBOUGHT):
@@ -319,10 +321,17 @@ Near 52-week high: {"YES" if s.get('near_52w_high') else "no"}
         top_movers = []   # significant day moves
         clean = []        # nothing notable
 
+        muted_tickers = []
         for ticker, h in holdings.items():
             s = signals.get(ticker)
             if not s:
                 continue
+
+            # Muted = long-term hold, skip alerts but count in totals
+            if self.store.is_muted(ticker):
+                muted_tickers.append(ticker)
+                continue
+
             flags = []
             if s.get("rel_volume") and s["rel_volume"] >= VOL_SPIKE:
                 flags.append(f"🔥 Vol {s['rel_volume']}x")
@@ -416,7 +425,13 @@ Near 52-week high: {"YES" if s.get('near_52w_high') else "no"}
             lines += ["", f"<b>✅ {len(clean)} positions tracking normally</b>"]
             lines.append(f"<i>{', '.join(f'${t}' for t in clean)}</i>")
 
-        lines += ["", "<i>Type /detail TICKER for full breakdown on any stock</i>"]
+        # ── Long-term holds (muted) ──
+        if muted_tickers:
+            lines += ["", f"<b>🔕 {len(muted_tickers)} long-term holds (alerts off)</b>"]
+            lines.append(f"<i>{', '.join(f'${t}' for t in muted_tickers)}</i>")
+            lines.append("<i>Use /unmute TICKER to re-enable alerts</i>")
+
+        lines += ["", "<i>/detail TICKER — full breakdown on any stock</i>"]
 
         return "\n".join(lines)
 

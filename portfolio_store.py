@@ -24,6 +24,7 @@ class PortfolioStore:
     def __init__(self):
         self._watchlist: list[str] = []
         self._holdings: dict[str, Holding] = {}
+        self._muted: set[str] = set()   # tracked for P&L but no alerts
         self._load()
 
     # ------------------------------------------------------------------ #
@@ -37,6 +38,7 @@ class PortfolioStore:
             with open(STORE_FILE) as f:
                 data = json.load(f)
             self._watchlist = data.get("watchlist", [])
+            self._muted = set(data.get("muted", []))
             for ticker, h in data.get("holdings", {}).items():
                 self._holdings[ticker] = Holding(
                     ticker=ticker,
@@ -44,8 +46,8 @@ class PortfolioStore:
                     avg_cost=h.get("avg_cost"),
                 )
             logger.info(
-                "Portfolio loaded: %d watchlist, %d holdings",
-                len(self._watchlist), len(self._holdings),
+                "Portfolio loaded: %d holdings, %d muted, %d watchlist",
+                len(self._holdings), len(self._muted), len(self._watchlist),
             )
         except Exception as e:
             logger.error("Failed to load portfolio: %s", e)
@@ -54,6 +56,7 @@ class PortfolioStore:
         try:
             data = {
                 "watchlist": self._watchlist,
+                "muted": list(self._muted),
                 "holdings": {
                     ticker: {"shares": h.shares, "avg_cost": h.avg_cost}
                     for ticker, h in self._holdings.items()
@@ -114,3 +117,21 @@ class PortfolioStore:
     def all_tickers(self) -> list[str]:
         """All unique tickers across watchlist and holdings."""
         return list(set(self._watchlist) | set(self._holdings.keys()))
+
+    # ------------------------------------------------------------------ #
+    #  Muting (long-term holds — track P&L but no alerts)                 #
+    # ------------------------------------------------------------------ #
+
+    def mute(self, ticker: str) -> None:
+        self._muted.add(ticker.upper())
+        self._save()
+
+    def unmute(self, ticker: str) -> None:
+        self._muted.discard(ticker.upper())
+        self._save()
+
+    def is_muted(self, ticker: str) -> bool:
+        return ticker.upper() in self._muted
+
+    def get_muted(self) -> set[str]:
+        return set(self._muted)

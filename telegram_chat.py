@@ -252,6 +252,27 @@ class TelegramChatHandler:
             await self._send("Fetching your portfolio... give me a moment.")
             await self._portfolio_monitor.send_snapshot()
 
+        elif cmd == "/mute":
+            if not self._store or len(parts) < 2:
+                await self._send("Usage: /mute GDX SIL WPM")
+                return
+            tickers = [t.upper() for t in parts[1:]]
+            for t in tickers:
+                self._store.mute(t)
+            await self._send(
+                f"🔕 Alerts muted for: {', '.join(f'${t}' for t in tickers)}\n"
+                "They still appear in /portfolio P&L. Use /unmute TICKER to re-enable."
+            )
+
+        elif cmd == "/unmute":
+            if not self._store or len(parts) < 2:
+                await self._send("Usage: /unmute GDX")
+                return
+            tickers = [t.upper() for t in parts[1:]]
+            for t in tickers:
+                self._store.unmute(t)
+            await self._send(f"🔔 Alerts re-enabled for: {', '.join(f'${t}' for t in tickers)}")
+
         elif cmd == "/detail":
             if not self._portfolio_monitor or len(parts) < 2:
                 await self._send("Usage: /detail NVDA")
