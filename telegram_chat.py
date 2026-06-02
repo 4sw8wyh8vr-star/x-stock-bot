@@ -15,9 +15,11 @@ import anthropic
 import httpx
 
 from config import Config
+from portfolio_store import PortfolioStore
 
 if TYPE_CHECKING:
     from x_monitor import Tweet
+    from portfolio_monitor import PortfolioMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +64,16 @@ def _parse_tweet_date(created_at: str) -> str:
 
 
 class TelegramChatHandler:
-    def __init__(self, config: Config, tweet_history: list):
+    def __init__(self, config: Config, tweet_history: list,
+                 store: PortfolioStore | None = None,
+                 portfolio_monitor=None):
         self.config = config
-        self._tweet_history = tweet_history   # shared list, mutated by x_monitor_loop
+        self._tweet_history = tweet_history
+        self._store = store
+        self._portfolio_monitor = portfolio_monitor
         self.base_url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
         self.client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-        self._history: list[dict] = []   # conversation turns
+        self._history: list[dict] = []
         self._offset: int = 0
 
     # ------------------------------------------------------------------ #
@@ -134,25 +140,37 @@ class TelegramChatHandler:
     # ------------------------------------------------------------------ #
 
     async def _handle_command(self, text: str) -> None:
-        cmd = text.split()[0].lower()
+        parts = text.strip().split()
+        cmd = parts[0].lower()
+
+        # ── Conversation ──────────────────────────────────────────────
         if cmd == "/start":
             n = len(self._tweet_history)
             await self._send(
                 f"👋 <b>Stock Analyst Assistant ready.</b>\n\n"
-                f"I have <b>{n} posts</b> from the monitored account loaded as context — "
-                f"ask me about any of them, any ticker, or any trade setup.\n\n"
-                f"Commands:\n"
+                f"I have <b>{n} posts</b> from the monitored accounts loaded.\n\n"
+                f"<b>Chat commands:</b>\n"
                 f"  /clear — wipe conversation history\n"
-                f"  /posts — show how many posts I have loaded\n"
-                f"  /help  — show this message"
+                f"  /posts — show loaded post count\n\n"
+                f"<b>Portfolio commands:</b>\n"
+                f"  /watch NVDA — add to watchlist\n"
+                f"  /unwatch NVDA — remove from watchlist\n"
+                f"  /holding NVDA 50 — record 50 shares of NVDA\n"
+                f"  /holding NVDA 50 820 — 50 shares at $820 avg cost\n"
+                f"  /sold NVDA — remove a holding\n"
+                f"  /portfolio — full snapshot with live prices\n"
+                f"  /watchlist — your watchlist with current signals\n"
+                f"  /scan — manually check all tickers right now\n"
+                f"  /help — show this message"
             )
         elif cmd in ("/clear", "/reset"):
             self._history = []
             await self._send("🗑️ Conversation cleared. Post history still loaded.")
+
         elif cmd == "/posts":
             n = len(self._tweet_history)
             if n == 0:
-                await self._send("No posts loaded yet — the monitor is still starting up.")
+                await self._send("No posts loaded yet — monitor is still starting up.")
             else:
                 newest = sorted(self._tweet_history, key=lambda t: t.id, reverse=True)[0]
                 oldest = sorted(self._tweet_history, key=lambda t: t.id)[0]
@@ -161,19 +179,110 @@ class TelegramChatHandler:
                     f"Oldest: {_parse_tweet_date(oldest.created_at)}\n"
                     f"Newest: {_parse_tweet_date(newest.created_at)}"
                 )
+
+        # ── Watchlist ─────────────────────────────────────────────────
+        elif cmd == "/watch":
+            if not self._store or len(parts) < 2:
+                await self._send("Usage: /watch NVDA AAPL TSLA")
+                return
+            added = [t.upper() for t in parts[1:] if self._store.add_watch(t)]
+            skipped = [t.upper() for t in parts[1:] if t.upper() not in added]
+            msg = ""
+            if added:
+                msg += f"✅ Added to watchlist: {', '.join(f'${t}' for t in added)}\n"
+            if skipped:
+                msg += f"Already watching: {', '.join(f'${t}' for t in skipped)}"
+            await self._send(msg.strip())
+
+        elif cmd == "/unwatch":
+            if not self._store or len(parts) < 2:
+                await self._send("Usage: /unwatch NVDA")
+                return
+            ticker = parts[1].upper()
+            if self._store.remove_watch(ticker):
+                await self._send(f"Removed ${ticker} from watchlist.")
+            else:
+                await self._send(f"${ticker} wasn't on your watchlist.")
+
+        elif cmd == "/watchlist":
+            if not self._store:
+                await self._send("Portfolio tracking not available.")
+                return
+            wl = self._store.get_watchlist()
+            if not wl:
+                await self._send("Your watchlist is empty. Add stocks with /watch NVDA")
+                return
+            await self._send("Fetching watchlist... give me a moment.")
+            if self._portfolio_monitor:
+                msg = await self._portfolio_monitor.snapshot()
+                await self._send(msg)
+            else:
+                await self._send("  ".join(f"${t}" for t in wl))
+
+        # ── Holdings ──────────────────────────────────────────────────
+        elif cmd == "/holding":
+            # /holding NVDA 50         → 50 shares, no cost
+            # /holding NVDA 50 820     → 50 shares at $820 avg cost
+            if not self._store or len(parts) < 3:
+                await self._send("Usage: /holding NVDA 50\nOr with cost: /holding NVDA 50 820.00")
+                return
+            try:
+                ticker = parts[1].upper()
+                shares = float(parts[2])
+                avg_cost = float(parts[3]) if len(parts) >= 4 else None
+                self._store.set_holding(ticker, shares, avg_cost)
+                cost_str = f" at ${avg_cost:.2f} avg" if avg_cost else ""
+                await self._send(f"✅ Recorded: {shares} shares of ${ticker}{cost_str}")
+            except ValueError:
+                await self._send("Couldn't parse that. Example: /holding NVDA 50 820")
+
+        elif cmd == "/sold":
+            if not self._store or len(parts) < 2:
+                await self._send("Usage: /sold NVDA")
+                return
+            ticker = parts[1].upper()
+            if self._store.remove_holding(ticker):
+                await self._send(f"Removed ${ticker} from your holdings.")
+            else:
+                await self._send(f"${ticker} wasn't in your holdings.")
+
+        elif cmd == "/portfolio":
+            if not self._portfolio_monitor:
+                await self._send("Portfolio tracking not available.")
+                return
+            await self._send("Fetching your portfolio... give me a moment.")
+            msg = await self._portfolio_monitor.snapshot()
+            await self._send(msg)
+
+        elif cmd == "/scan":
+            if not self._portfolio_monitor:
+                await self._send("Portfolio tracking not available.")
+                return
+            tickers = self._store.all_tickers() if self._store else []
+            if not tickers:
+                await self._send("Nothing to scan — add stocks with /watch or /holding first.")
+                return
+            await self._send(f"Scanning {len(tickers)} ticker(s)...")
+            await self._portfolio_monitor._scan_all(tickers)
+            await self._send("Scan complete. Any signals were sent above.")
+
         elif cmd == "/help":
             await self._send(
-                "Just talk to me normally. I can see all the monitored account's recent posts.\n\n"
-                "<b>Example questions:</b>\n"
-                "• <i>When did she first mention $SIVE?</i>\n"
-                "• <i>What's her current take on $NVTS?</i>\n"
-                "• <i>Has she posted about any semiconductor plays?</i>\n"
-                "• <i>What's your view on $AAPL at current levels?</i>\n\n"
-                "/clear — reset conversation memory\n"
-                "/posts — show loaded post count"
+                "<b>Chat:</b> just talk to me normally about any stock or her posts.\n\n"
+                "<b>Portfolio commands:</b>\n"
+                "  /watch NVDA — add to watchlist\n"
+                "  /unwatch NVDA — remove\n"
+                "  /holding NVDA 50 — 50 shares of NVDA\n"
+                "  /holding NVDA 50 820 — 50 shares at $820 avg\n"
+                "  /sold NVDA — remove holding\n"
+                "  /portfolio — full snapshot\n"
+                "  /scan — check all tickers now\n"
+                "  /clear — reset chat memory\n"
+                "  /posts — show loaded post count"
             )
+
         else:
-            await self._send("Unknown command. Type /help for options.")
+            await self._send("Unknown command. Type /help to see all commands.")
 
     # ------------------------------------------------------------------ #
     #  Claude                                                              #
